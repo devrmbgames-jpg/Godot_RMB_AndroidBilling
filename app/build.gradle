@@ -51,11 +51,10 @@ android {
 }
 
 dependencies {
-    // Google Play Billing 9.1.0. The KTX artifact also supplies the coroutine helpers
-    // used by queryPurchasesAsync in BillingService.
+    // Google Play Billing 9.1.0. KTX provides coroutine helpers used by the service.
     implementation 'com.android.billingclient:billing-ktx:9.1.0'
 
-    // Godot Android library must be supplied locally for the target Godot version.
-    releaseCompileOnly fileTree(dir: 'libs/release', include: ['*.jar', '*.aar'])
-    debugCompileOnly fileTree(dir: 'libs/debug', include: ['*.jar', '*.aar'])
+    // Compile against the exact Godot Android API used by the game, but do not package
+    // Godot into this plugin AAR. The engine is provided by the exported Godot app.
+    compileOnly 'org.godotengine:godot:3.6.2.stable'
 }
