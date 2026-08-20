@@ -6,17 +6,13 @@ This plugin keeps the existing Godot-facing API (`build`, `purchase`, `subscribe
 
 The plugin project uses Android Gradle Plugin 8.2 and JDK 17. The produced plugin bytecode also targets Java 17, matching the Godot Android build configuration used by this project.
 
-Download the Godot 3.6.2 Android library and put it here before building:
+Godot 3.6.2 is consumed as a compile-only Maven dependency:
 
-```text
-app/libs/release/godot-lib.3.6.2.stable.release.aar
+```gradle
+compileOnly 'org.godotengine:godot:3.6.2.stable'
 ```
 
-For a debug plugin build, also provide a compatible Godot debug AAR under:
-
-```text
-app/libs/debug/
-```
+so no local `godot-lib*.aar` copy is required to build this repository.
 
 Build the release AAR:
 
