@@ -150,7 +150,7 @@ class GodotGoogleBilling(godot: Godot) : GodotPlugin(godot) {
             override fun onConnected(status: Boolean, billingResponseCode: Int) {
                 Log.i(tag, " billing connected - $status. Code - $billingResponseCode")
                 if (status) {
-                    get_country()
+                    //get_country()
                 }
             }
         })
