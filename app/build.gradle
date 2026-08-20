@@ -23,15 +23,13 @@ android {
         }
     }
 
-    // Build the plugin with a modern JDK/AGP, but keep emitted bytecode compatible
-    // with the older Android toolchain commonly used by Godot 3.6.x custom builds.
     compileOptions {
-        sourceCompatibility JavaVersion.VERSION_11
-        targetCompatibility JavaVersion.VERSION_11
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
     }
 
     kotlinOptions {
-        jvmTarget = JavaVersion.VERSION_11
+        jvmTarget = JavaVersion.VERSION_17
     }
 
     def libName = project.property("library_name")
