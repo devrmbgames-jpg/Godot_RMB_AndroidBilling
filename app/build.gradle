@@ -1,22 +1,19 @@
 plugins {
-    id 'org.jetbrains.kotlin.android'
     id 'com.android.library'
-    id 'kotlin-android'
+    id 'org.jetbrains.kotlin.android'
 }
 
-
 android {
-
     namespace "com.dtho47.godot.billing"
-    compileSdk = 34
-    buildToolsVersion = '34.0.0'
+    compileSdk = 36
+    buildToolsVersion = '35.0.0'
 
     defaultConfig {
-        minSdk 24
-        versionCode 2
-        versionName "1.2.0"
+        minSdk 23
+        targetSdk 36
+        versionCode 3
+        versionName "1.3.0"
     }
-
 
     buildTypes {
         release {
@@ -24,21 +21,16 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
+
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
-    kotlinOptions {
-        jvmTarget = JavaVersion.VERSION_17
-    }
 
     def libName = project.property("library_name")
-
-    defaultConfig{
+    defaultConfig {
         buildConfigField "String", "LIBRARY_NAME", "\"$libName\""
     }
-
-    ndkVersion '23.2.8568313'
 
     libraryVariants.configureEach { variant ->
         variant.outputs.all { output ->
@@ -49,17 +41,34 @@ android {
     buildFeatures {
         buildConfig true
     }
-
 }
 
+kotlin {
+    jvmToolchain(17)
+}
+
+// Prefer the exact custom Godot engine AAR/JAR when it is present locally.
+// CI and clean clones fall back to the official Godot 3.6.2 Android AAR from Maven Central.
+// All Godot dependencies are compileOnly, so no Godot engine AAR is packaged into this plugin.
+def publicGodotCoordinate = 'org.godotengine:godot:3.6.2.stable'
+def releaseGodotLibraries = fileTree(dir: 'libs/release', include: ['godot-lib*.aar', 'godot-lib*.jar'])
+def debugGodotLibraries = fileTree(dir: 'libs/debug', include: ['godot-lib*.aar', 'godot-lib*.jar'])
 
 dependencies {
-    implementation 'androidx.fragment:fragment-ktx:1.8.4'
-    implementation 'androidx.appcompat:appcompat:1.7.0'
+    // Billing 9.1.0 KTX is compiled with Kotlin 2.3 metadata. The project toolchain
+    // intentionally uses Kotlin 2.3.21 / AGP 8.13.2 so the dependency is compiled natively
+    // rather than bypassing metadata checks with -Xskip-metadata-version-check.
     implementation 'com.android.billingclient:billing-ktx:9.1.0'
-    // Godot android library
-    releaseCompileOnly fileTree(dir: 'libs/release', include: ['*.jar', '*.aar'])
-    debugCompileOnly fileTree(dir: 'libs/debug', include: ['*.jar', '*.aar'])
 
+    if (!releaseGodotLibraries.files.isEmpty()) {
+        releaseCompileOnly releaseGodotLibraries
+    } else {
+        releaseCompileOnly publicGodotCoordinate
+    }
 
+    if (!debugGodotLibraries.files.isEmpty()) {
+        debugCompileOnly debugGodotLibraries
+    } else {
+        debugCompileOnly publicGodotCoordinate
+    }
 }
