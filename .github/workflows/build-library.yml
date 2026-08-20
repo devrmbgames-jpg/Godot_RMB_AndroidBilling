@@ -12,10 +12,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup JDK
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           java-version: '17'
           distribution: 'temurin'
@@ -24,10 +24,26 @@ jobs:
       - name: Grant execute permissions for gradlew
         run: chmod +x gradlew
 
+      - name: Validate Billing and AAR metadata
+        run: ./gradlew :app:checkReleaseAarMetadata
+
+      - name: Detect custom Godot release library
+        id: godot_lib
+        shell: bash
+        run: |
+          if [ -d app/libs/release ] && find app/libs/release -maxdepth 1 -type f \( -name '*.aar' -o -name '*.jar' \) -print -quit | grep -q .; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "Custom Godot AAR/JAR is intentionally not stored in the repository; skipping full plugin compilation."
+          fi
+
       - name: Build artifact
+        if: steps.godot_lib.outputs.present == 'true'
         run: ./gradlew :app:assembleRelease
 
       - name: Upload library package
+        if: steps.godot_lib.outputs.present == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: GodotGoogleBilling-release
