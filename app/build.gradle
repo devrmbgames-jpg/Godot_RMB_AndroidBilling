@@ -47,14 +47,28 @@ kotlin {
     jvmToolchain(17)
 }
 
+// Prefer the exact custom Godot engine AAR/JAR when it is present locally.
+// CI and clean clones fall back to the official Godot 3.6.2 Android AAR from Maven Central.
+// All Godot dependencies are compileOnly, so no Godot engine AAR is packaged into this plugin.
+def publicGodotCoordinate = 'org.godotengine:godot:3.6.2.stable'
+def releaseGodotLibraries = fileTree(dir: 'libs/release', include: ['godot-lib*.aar', 'godot-lib*.jar'])
+def debugGodotLibraries = fileTree(dir: 'libs/debug', include: ['godot-lib*.aar', 'godot-lib*.jar'])
+
 dependencies {
     // Billing 9.1.0 KTX is compiled with Kotlin 2.3 metadata. The project toolchain
     // intentionally uses Kotlin 2.3.21 / AGP 8.13.2 so the dependency is compiled natively
     // rather than bypassing metadata checks with -Xskip-metadata-version-check.
     implementation 'com.android.billingclient:billing-ktx:9.1.0'
 
-    // Compile against the exact (possibly modified) Godot Android library used by the game.
-    // Godot itself is not packaged into the plugin AAR.
-    releaseCompileOnly fileTree(dir: 'libs/release', include: ['*.jar', '*.aar'])
-    debugCompileOnly fileTree(dir: 'libs/debug', include: ['*.jar', '*.aar'])
+    if (!releaseGodotLibraries.files.isEmpty()) {
+        releaseCompileOnly releaseGodotLibraries
+    } else {
+        releaseCompileOnly publicGodotCoordinate
+    }
+
+    if (!debugGodotLibraries.files.isEmpty()) {
+        debugCompileOnly debugGodotLibraries
+    } else {
+        debugCompileOnly publicGodotCoordinate
+    }
 }
