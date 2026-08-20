@@ -28,11 +28,11 @@ The important compatibility points are:
 - Billing 9 requires `minSdk >= 23`;
 - AGP 8.13 uses JDK 17 and Gradle 8.13.
 
-## 2. Build against the modified Godot engine
+## 2. Godot Android library selection
 
-Because the game uses a modified Godot engine, compile against the exact Android AAR/JAR produced by that custom engine. Do not replace it with the public Maven Godot artifact.
+For local development and production builds, compile the plugin against the exact Android AAR/JAR produced by the modified Godot engine whenever possible.
 
-Put the release engine AAR/JAR into:
+Put the release engine library into:
 
 ```text
 app/libs/release/
@@ -44,20 +44,48 @@ For example:
 app/libs/release/godot-lib.custom.release.aar
 ```
 
-For a debug plugin build, put the corresponding artifact into:
+For debug builds, put the corresponding artifact into:
 
 ```text
 app/libs/debug/
 ```
 
-The plugin loads them only for compilation:
+The Gradle build uses this selection order independently for debug and release:
 
-```gradle
-releaseCompileOnly fileTree(dir: 'libs/release', include: ['*.jar', '*.aar'])
-debugCompileOnly fileTree(dir: 'libs/debug', include: ['*.jar', '*.aar'])
+1. If a local `godot-lib*.aar` or `godot-lib*.jar` exists in the variant folder, use it as `compileOnly`.
+2. Otherwise fall back to the official Maven Central artifact:
+
+```text
+org.godotengine:godot:3.6.2.stable
 ```
 
-Godot is therefore not embedded into the resulting billing plugin AAR.
+This fallback exists primarily so clean clones and GitHub Actions can compile and validate the plugin without storing the private/custom Godot engine binary in the repository.
+
+The relevant Gradle logic is equivalent to:
+
+```gradle
+def publicGodotCoordinate = 'org.godotengine:godot:3.6.2.stable'
+def releaseGodotLibraries = fileTree(dir: 'libs/release', include: ['godot-lib*.aar', 'godot-lib*.jar'])
+def debugGodotLibraries = fileTree(dir: 'libs/debug', include: ['godot-lib*.aar', 'godot-lib*.jar'])
+
+dependencies {
+    if (!releaseGodotLibraries.files.isEmpty()) {
+        releaseCompileOnly releaseGodotLibraries
+    } else {
+        releaseCompileOnly publicGodotCoordinate
+    }
+
+    if (!debugGodotLibraries.files.isEmpty()) {
+        debugCompileOnly debugGodotLibraries
+    } else {
+        debugCompileOnly publicGodotCoordinate
+    }
+}
+```
+
+Both the custom engine library and the Maven fallback are `compileOnly`, so neither is embedded into `GodotGoogleBilling.*.aar`.
+
+The Maven fallback only validates compatibility with the public Godot 3.6.2 Android plugin API. Before shipping, the plugin should still be compiled/tested against the actual modified Godot AAR if that engine changes Java/Kotlin-facing Android plugin APIs.
 
 Build with JDK 17:
 
@@ -173,12 +201,15 @@ The Android implementation:
 - consumes consumables and acknowledges non-consumables/subscriptions;
 - preserves the dictionaries/signals exposed to Godot.
 
-## 7. Validation
+## 7. CI and validation
+
+GitHub Actions runs a full release build. In CI there normally is no local custom engine AAR, so Gradle automatically compiles against `org.godotengine:godot:3.6.2.stable` from Maven Central and uploads the produced plugin AAR.
 
 After the plugin compiles, validate at least:
 
 - `:app:assembleDebug` and `:app:assembleRelease`;
 - the dependency tree contains only Billing 9.1.0;
+- local production build uses the actual custom Godot AAR;
 - non-consumable purchase;
 - consumable purchase and re-purchase after consume;
 - subscription purchase;
