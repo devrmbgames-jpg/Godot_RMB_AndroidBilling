@@ -27,10 +27,6 @@ android {
         targetCompatibility JavaVersion.VERSION_17
     }
 
-    kotlin {
-        jvmToolchain(17)
-    }
-
     def libName = project.property("library_name")
     defaultConfig {
         buildConfigField "String", "LIBRARY_NAME", "\"$libName\""
@@ -45,6 +41,10 @@ android {
     buildFeatures {
         buildConfig true
     }
+}
+
+kotlin {
+    jvmToolchain(17)
 }
 
 dependencies {
