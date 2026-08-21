@@ -163,10 +163,20 @@ class BillingService(
             if (obfuscatedAccountId != null) billingFlowParamsBuilder.setObfuscatedAccountId(obfuscatedAccountId)
             if (obfuscatedProfileId != null) billingFlowParamsBuilder.setObfuscatedProfileId(obfuscatedProfileId)
 
-            val launchResult = mBillingClient.launchBillingFlow(activity, billingFlowParamsBuilder.build())
-            if (!launchResult.isOk()) {
-                log("launchBillingFlow failed for $sku: ${launchResult.responseCode} ${launchResult.debugMessage}")
-                updateFailedPurchase(billingResponseCode = launchResult.responseCode)
+            // Google Play requires launchBillingFlow() to be invoked from the app's main thread.
+            // queryProductDetailsAsync() is asynchronous, so do not rely on its callback thread.
+            postToUiThread {
+                if (activity.isFinishing || activity.isDestroyed) {
+                    Log.w(TAG, "launchBillingFlow skipped because Activity is finishing/destroyed for sku=$sku")
+                    updateFailedPurchase(billingResponseCode = BillingClient.BillingResponseCode.ERROR)
+                    return@postToUiThread
+                }
+
+                val launchResult = mBillingClient.launchBillingFlow(activity, billingFlowParamsBuilder.build())
+                if (!launchResult.isOk()) {
+                    log("launchBillingFlow failed for $sku: ${launchResult.responseCode} ${launchResult.debugMessage}")
+                    updateFailedPurchase(billingResponseCode = launchResult.responseCode)
+                }
             }
         }
     }
