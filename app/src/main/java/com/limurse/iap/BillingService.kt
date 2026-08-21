@@ -53,7 +53,9 @@ class BillingService(
                     nonConsumableKeys.queryProductDetails(BillingClient.ProductType.INAPP) {
                         consumableKeys.queryProductDetails(BillingClient.ProductType.INAPP) {
                             subscriptionSkuKeys.queryProductDetails(BillingClient.ProductType.SUBS) {
-                                CoroutineScope(Dispatchers.IO).launch {
+                                // queryPurchasesAsync is asynchronous; running the orchestration on Main
+                                // avoids touching Billing/Godot-related state from a worker thread.
+                                CoroutineScope(Dispatchers.Main).launch {
                                     queryPurchases()
                                 }
                             }
@@ -203,7 +205,7 @@ class BillingService(
             BillingClient.BillingResponseCode.USER_CANCELED -> log("onPurchasesUpdated: user canceled the purchase")
             BillingClient.BillingResponseCode.ITEM_ALREADY_OWNED -> {
                 log("onPurchasesUpdated: item already owned; refreshing active purchases")
-                CoroutineScope(Dispatchers.IO).launch { queryPurchases() }
+                CoroutineScope(Dispatchers.Main).launch { queryPurchases() }
             }
             BillingClient.BillingResponseCode.DEVELOPER_ERROR -> Log.e(
                 TAG,
@@ -247,10 +249,9 @@ class BillingService(
 
                 val resolvedProductType = sourceProductType ?: resolveProductType(sku)
 
-                // Kidduca's Godot transaction container asserts that every transaction references a
-                // product already present in its configured catalog. Billing can still return legacy
-                // owned SKUs that are no longer configured by the game. Restore configured products
-                // even when ProductDetails is unfetched, but do not publish unknown legacy SKUs to Godot.
+                // Kidduca's configured catalog is the public Godot-side contract. Billing can still
+                // return legacy owned SKUs no longer configured by the game; do not emit those into
+                // the Godot transaction model during automatic restore.
                 if (isRestore && !isConfiguredProduct(sku, resolvedProductType)) {
                     Log.w(TAG, "Skipping restore for unconfigured sku=$sku type=$resolvedProductType")
                     continue@purchases
