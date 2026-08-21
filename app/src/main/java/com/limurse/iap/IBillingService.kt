@@ -4,13 +4,13 @@ import android.app.Activity
 import android.os.Handler
 import android.os.Looper
 import androidx.annotation.CallSuper
+import com.android.billingclient.api.BillingClient
 
 abstract class IBillingService {
 
     private val purchaseServiceListeners: MutableList<PurchaseServiceListener> = mutableListOf()
     private val subscriptionServiceListeners: MutableList<SubscriptionServiceListener> = mutableListOf()
     private val billingClientConnectedListeners: MutableList<BillingClientConnectionListener> = mutableListOf()
-
 
     fun addBillingClientConnectionListener(billingClientConnectionListener: BillingClientConnectionListener) {
         billingClientConnectedListeners.add(billingClientConnectionListener)
@@ -41,17 +41,13 @@ abstract class IBillingService {
      * @param isRestore Flag indicating whether it's a fresh purchase or restored product
      */
     fun productOwned(purchaseInfo: DataWrappers.PurchaseInfo, isRestore: Boolean) {
-        findUiHandler().post {
-            productOwnedInternal(purchaseInfo, isRestore)
-        }
-    }
-
-    private fun productOwnedInternal(purchaseInfo: DataWrappers.PurchaseInfo, isRestore: Boolean) {
-        for (purchaseServiceListener in purchaseServiceListeners) {
-            if (isRestore) {
-                purchaseServiceListener.onProductRestored(purchaseInfo)
-            } else {
-                purchaseServiceListener.onProductPurchased(purchaseInfo)
+        runOnUiThread {
+            for (purchaseServiceListener in purchaseServiceListeners.toList()) {
+                if (isRestore) {
+                    purchaseServiceListener.onProductRestored(purchaseInfo)
+                } else {
+                    purchaseServiceListener.onProductPurchased(purchaseInfo)
+                }
             }
         }
     }
@@ -61,41 +57,56 @@ abstract class IBillingService {
      * @param isRestore Flag indicating whether it's a fresh purchase or restored subscription
      */
     fun subscriptionOwned(purchaseInfo: DataWrappers.PurchaseInfo, isRestore: Boolean) {
-        findUiHandler().post {
-            subscriptionOwnedInternal(purchaseInfo, isRestore)
-        }
-    }
-
-    private fun subscriptionOwnedInternal(purchaseInfo: DataWrappers.PurchaseInfo, isRestore: Boolean) {
-        for (subscriptionServiceListener in subscriptionServiceListeners) {
-            if (isRestore) {
-                subscriptionServiceListener.onSubscriptionRestored(purchaseInfo)
-            } else {
-                subscriptionServiceListener.onSubscriptionPurchased(purchaseInfo)
+        runOnUiThread {
+            for (subscriptionServiceListener in subscriptionServiceListeners.toList()) {
+                if (isRestore) {
+                    subscriptionServiceListener.onSubscriptionRestored(purchaseInfo)
+                } else {
+                    subscriptionServiceListener.onSubscriptionPurchased(purchaseInfo)
+                }
             }
         }
     }
 
     fun isBillingClientConnected(status: Boolean, responseCode: Int) {
-        findUiHandler().post {
-            for (billingServiceListener in billingClientConnectedListeners) {
+        runOnUiThread {
+            for (billingServiceListener in billingClientConnectedListeners.toList()) {
                 billingServiceListener.onConnected(status, responseCode)
             }
         }
     }
 
-    fun updatePrices(iapKeyPrices: Map<String, List<DataWrappers.ProductDetails>>) {
-        findUiHandler().post {
-            updatePricesInternal(iapKeyPrices)
-        }
-    }
-
-    private fun updatePricesInternal(iapKeyPrices: Map<String, List<DataWrappers.ProductDetails>>) {
-        for (billingServiceListener in purchaseServiceListeners) {
-            billingServiceListener.onPricesUpdated(iapKeyPrices)
-        }
-        for (billingServiceListener in subscriptionServiceListeners) {
-            billingServiceListener.onPricesUpdated(iapKeyPrices)
+    /**
+     * Product callbacks are dispatched immediately when Billing already called us on the main
+     * thread. Routing by ProductType prevents a single SKU from being emitted twice to Godot with
+     * conflicting type_product values.
+     */
+    fun updatePrices(
+        iapKeyPrices: Map<String, List<DataWrappers.ProductDetails>>,
+        productType: String? = null
+    ) {
+        runOnUiThread {
+            when (productType) {
+                BillingClient.ProductType.INAPP -> {
+                    for (listener in purchaseServiceListeners.toList()) {
+                        listener.onPricesUpdated(iapKeyPrices)
+                    }
+                }
+                BillingClient.ProductType.SUBS -> {
+                    for (listener in subscriptionServiceListeners.toList()) {
+                        listener.onPricesUpdated(iapKeyPrices)
+                    }
+                }
+                else -> {
+                    // Preserve the previous internal API behavior for any caller that doesn't pass a type.
+                    for (listener in purchaseServiceListeners.toList()) {
+                        listener.onPricesUpdated(iapKeyPrices)
+                    }
+                    for (listener in subscriptionServiceListeners.toList()) {
+                        listener.onPricesUpdated(iapKeyPrices)
+                    }
+                }
+            }
         }
     }
 
@@ -106,17 +117,13 @@ abstract class IBillingService {
     }
 
     fun updateFailedPurchase(purchaseInfo: DataWrappers.PurchaseInfo? = null, billingResponseCode: Int? = null) {
-        findUiHandler().post {
-            updateFailedPurchasesInternal(purchaseInfo, billingResponseCode)
-        }
-    }
-
-    private fun updateFailedPurchasesInternal(purchaseInfo: DataWrappers.PurchaseInfo? = null, billingResponseCode: Int? = null) {
-        for (billingServiceListener in purchaseServiceListeners) {
-            billingServiceListener.onPurchaseFailed(purchaseInfo, billingResponseCode)
-        }
-        for (billingServiceListener in subscriptionServiceListeners) {
-            billingServiceListener.onPurchaseFailed(purchaseInfo, billingResponseCode)
+        runOnUiThread {
+            for (billingServiceListener in purchaseServiceListeners.toList()) {
+                billingServiceListener.onPurchaseFailed(purchaseInfo, billingResponseCode)
+            }
+            for (billingServiceListener in subscriptionServiceListeners.toList()) {
+                billingServiceListener.onPurchaseFailed(purchaseInfo, billingResponseCode)
+            }
         }
     }
 
@@ -135,6 +142,14 @@ abstract class IBillingService {
     }
 }
 
-fun findUiHandler(): Handler {
-    return Handler(Looper.getMainLooper())
+private val uiHandler: Handler by lazy { Handler(Looper.getMainLooper()) }
+
+fun findUiHandler(): Handler = uiHandler
+
+fun runOnUiThread(action: () -> Unit) {
+    if (Looper.myLooper() == Looper.getMainLooper()) {
+        action()
+    } else {
+        uiHandler.post(action)
+    }
 }

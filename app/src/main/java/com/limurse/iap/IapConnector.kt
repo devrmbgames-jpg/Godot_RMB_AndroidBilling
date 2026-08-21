@@ -13,6 +13,8 @@ import kotlinx.coroutines.DelicateCoroutinesApi
  * @param subscriptionKeys SKU list for subscriptions.
  * @param key Key to verify purchase messages. Leave it empty if you want to skip verification.
  * @param enableLogging Log operations/errors to the logcat for debugging purposes.
+ * @param autoStart Start the BillingClient from the constructor. Set false when listeners must be
+ * registered before the initial product/restore callbacks are allowed to run.
  */
 @OptIn(DelicateCoroutinesApi::class)
 class IapConnector @JvmOverloads constructor(
@@ -20,17 +22,33 @@ class IapConnector @JvmOverloads constructor(
     nonConsumableKeys: List<String> = emptyList(),
     consumableKeys: List<String> = emptyList(),
     subscriptionKeys: List<String> = emptyList(),
-    key: String? = null,
-    enableLogging: Boolean = false
+    private val key: String? = null,
+    private val enableLogging: Boolean = false,
+    autoStart: Boolean = true
 ) {
 
     private var mBillingService: IBillingService? = null
+    private var started: Boolean = false
 
     init {
         val contextLocal = context.applicationContext ?: context
         mBillingService = BillingService(contextLocal, nonConsumableKeys, consumableKeys, subscriptionKeys)
-        getBillingService().init(key)
+        if (autoStart) {
+            start()
+        }
+    }
+
+    /**
+     * Start Google Play Billing once. This is intentionally separate from listener registration so
+     * callers such as the Godot bridge can subscribe before the first product/restore callbacks.
+     */
+    fun start() {
+        if (started) {
+            return
+        }
+        started = true
         getBillingService().enableDebugLogging(enableLogging)
+        getBillingService().init(key)
     }
 
     fun addBillingClientConnectionListener(billingClientConnectionListener: BillingClientConnectionListener) {
@@ -71,14 +89,14 @@ class IapConnector @JvmOverloads constructor(
 
     fun destroy() {
         getBillingService().close()
+        started = false
     }
 
     fun getCountryCode(listener: BillingClientGetCountryListener) {
         getBillingService().getCountryCode(listener)
     }
+
     private fun getBillingService(): IBillingService {
-        return mBillingService ?: let {
-            throw RuntimeException("Call IapConnector to initialize billing service")
-        }
+        return mBillingService ?: throw RuntimeException("Call IapConnector to initialize billing service")
     }
 }
