@@ -7,6 +7,7 @@ import com.limurse.iap.DataWrappers
 import com.limurse.iap.IapConnector
 import com.limurse.iap.PurchaseServiceListener
 import com.limurse.iap.SubscriptionServiceListener
+import com.limurse.iap.postToUiThread
 import org.godotengine.godot.Dictionary
 import org.godotengine.godot.Godot
 import org.godotengine.godot.plugin.GodotPlugin
@@ -53,8 +54,11 @@ class GodotGoogleBilling(godot: Godot) : GodotPlugin(godot) {
 
         iapConnector.getCountryCode(object : BillingClientGetCountryListener {
             override fun onResult(countryCode: String) {
-                this@GodotGoogleBilling.countryCode = countryCode
-                emitSignal(godot, tag, signalCountryCodeUpdate, countryCode)
+                // Keep every Godot/JNI signal on the same deferred Android main-loop path.
+                postToUiThread {
+                    this@GodotGoogleBilling.countryCode = countryCode
+                    emitSignal(godot, tag, signalCountryCodeUpdate, countryCode)
+                }
             }
         })
         return countryCode
