@@ -4,6 +4,7 @@ import android.app.Activity
 import android.os.Handler
 import android.os.Looper
 import androidx.annotation.CallSuper
+import com.android.billingclient.api.BillingClient
 
 abstract class IBillingService {
 
@@ -77,16 +78,34 @@ abstract class IBillingService {
 
     /**
      * Product callbacks are dispatched immediately when Billing already called us on the main
-     * thread. This preserves ordering: Godot receives product signals before restore signals are
-     * allowed to follow from the same initialization sequence.
+     * thread. Routing by ProductType prevents a single SKU from being emitted twice to Godot with
+     * conflicting type_product values.
      */
-    fun updatePrices(iapKeyPrices: Map<String, List<DataWrappers.ProductDetails>>) {
+    fun updatePrices(
+        iapKeyPrices: Map<String, List<DataWrappers.ProductDetails>>,
+        productType: String? = null
+    ) {
         runOnUiThread {
-            for (billingServiceListener in purchaseServiceListeners.toList()) {
-                billingServiceListener.onPricesUpdated(iapKeyPrices)
-            }
-            for (billingServiceListener in subscriptionServiceListeners.toList()) {
-                billingServiceListener.onPricesUpdated(iapKeyPrices)
+            when (productType) {
+                BillingClient.ProductType.INAPP -> {
+                    for (listener in purchaseServiceListeners.toList()) {
+                        listener.onPricesUpdated(iapKeyPrices)
+                    }
+                }
+                BillingClient.ProductType.SUBS -> {
+                    for (listener in subscriptionServiceListeners.toList()) {
+                        listener.onPricesUpdated(iapKeyPrices)
+                    }
+                }
+                else -> {
+                    // Preserve the previous internal API behavior for any caller that doesn't pass a type.
+                    for (listener in purchaseServiceListeners.toList()) {
+                        listener.onPricesUpdated(iapKeyPrices)
+                    }
+                    for (listener in subscriptionServiceListeners.toList()) {
+                        listener.onPricesUpdated(iapKeyPrices)
+                    }
+                }
             }
         }
     }
