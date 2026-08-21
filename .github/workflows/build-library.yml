@@ -30,6 +30,21 @@ jobs:
       - name: Build artifact
         run: ./gradlew :app:assembleRelease
 
+      - name: Verify Godot public ABI
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp_dir="$(mktemp -d)"
+          unzip -q app/build/outputs/aar/GodotGoogleBilling.release.aar -d "$tmp_dir"
+          javap -classpath "$tmp_dir/classes.jar" com.dtho47.godot.billing.GodotGoogleBilling > "$tmp_dir/api.txt"
+          cat "$tmp_dir/api.txt"
+
+          grep -Fq 'public final java.lang.String get_country();' "$tmp_dir/api.txt"
+          grep -Fq 'public final void build(java.lang.String[], java.lang.String[], java.lang.String[], java.lang.String);' "$tmp_dir/api.txt"
+          grep -Fq 'public final void purchase(java.lang.String);' "$tmp_dir/api.txt"
+          grep -Fq 'public final void subscribe(java.lang.String);' "$tmp_dir/api.txt"
+          grep -Fq 'public final void unsubscribe(java.lang.String);' "$tmp_dir/api.txt"
+
       - name: Upload library package
         uses: actions/upload-artifact@v4
         with:
