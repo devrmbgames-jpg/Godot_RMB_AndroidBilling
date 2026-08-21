@@ -16,10 +16,13 @@ import org.godotengine.godot.plugin.UsedByGodot
 class GodotGoogleBilling(godot: Godot) : GodotPlugin(godot) {
     private val tag: String = "GodotGoogleBilling"
 
-    private val signalPricesUpdate = SignalInfo("prices_in_app_update", Object::class.java)
-    private val signalProductPurchased = SignalInfo("product_purchased", Object::class.java)
-    private val signalProductRestored = SignalInfo("product_restored", Object::class.java)
-    private val signalProductFailed = SignalInfo("product_failed", Object::class.java)
+    // Godot 3's Android bridge supports org.godotengine.godot.Dictionary explicitly.
+    // java.lang.Object is not a supported bridge type and can be unsafe with custom engine builds.
+    // This only corrects signal metadata; signal names, arity and emitted values stay unchanged.
+    private val signalPricesUpdate = SignalInfo("prices_in_app_update", Dictionary::class.java)
+    private val signalProductPurchased = SignalInfo("product_purchased", Dictionary::class.java)
+    private val signalProductRestored = SignalInfo("product_restored", Dictionary::class.java)
+    private val signalProductFailed = SignalInfo("product_failed", Dictionary::class.java)
     private val signalCountryCodeUpdate = SignalInfo("country_code_update", String::class.java)
 
     private lateinit var iapConnector: IapConnector
