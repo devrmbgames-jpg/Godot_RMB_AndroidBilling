@@ -6,9 +6,6 @@ import android.content.Intent
 import android.net.Uri
 import android.util.Log
 import com.android.billingclient.api.*
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 
 class BillingService(
     private val context: Context,
@@ -53,11 +50,7 @@ class BillingService(
                     nonConsumableKeys.queryProductDetails(BillingClient.ProductType.INAPP) {
                         consumableKeys.queryProductDetails(BillingClient.ProductType.INAPP) {
                             subscriptionSkuKeys.queryProductDetails(BillingClient.ProductType.SUBS) {
-                                // queryPurchasesAsync is asynchronous; running the orchestration on Main
-                                // avoids touching Billing/Godot-related state from a worker thread.
-                                CoroutineScope(Dispatchers.Main).launch {
-                                    queryPurchases()
-                                }
+                                queryPurchases()
                             }
                         }
                     }
@@ -68,40 +61,57 @@ class BillingService(
         })
     }
 
-    private suspend fun queryPurchases() {
-        try {
-            val inAppResult: PurchasesResult = mBillingClient.queryPurchasesAsync(
-                QueryPurchasesParams.newBuilder()
-                    .setProductType(BillingClient.ProductType.INAPP)
-                    .build()
-            )
-            if (inAppResult.billingResult.isOk()) {
-                processPurchases(
-                    inAppResult.purchasesList,
-                    isRestore = true,
-                    sourceProductType = BillingClient.ProductType.INAPP
-                )
-            } else {
-                log("queryPurchases INAPP failed: ${inAppResult.billingResult.debugMessage}")
-            }
+    /**
+     * Restore active purchases using BillingClient's callback API. No coroutine dispatcher is
+     * involved, so restore cannot accidentally enter Godot from a worker coroutine or depend on
+     * kotlinx-coroutines-android being present in the consuming game.
+     */
+    private fun queryPurchases() {
+        if (!::mBillingClient.isInitialized || !mBillingClient.isReady) {
+            log("queryPurchases skipped: billing client is not ready")
+            return
+        }
 
-            val subsResult: PurchasesResult = mBillingClient.queryPurchasesAsync(
-                QueryPurchasesParams.newBuilder()
+        val inAppParams = QueryPurchasesParams.newBuilder()
+            .setProductType(BillingClient.ProductType.INAPP)
+            .build()
+
+        mBillingClient.queryPurchasesAsync(inAppParams) { inAppResult, inAppPurchases ->
+            try {
+                if (inAppResult.isOk()) {
+                    processPurchases(
+                        inAppPurchases,
+                        isRestore = true,
+                        sourceProductType = BillingClient.ProductType.INAPP
+                    )
+                } else {
+                    log("queryPurchases INAPP failed: ${inAppResult.debugMessage}")
+                }
+
+                val subsParams = QueryPurchasesParams.newBuilder()
                     .setProductType(BillingClient.ProductType.SUBS)
                     .build()
-            )
-            if (subsResult.billingResult.isOk()) {
-                processPurchases(
-                    subsResult.purchasesList,
-                    isRestore = true,
-                    sourceProductType = BillingClient.ProductType.SUBS
-                )
-            } else {
-                log("queryPurchases SUBS failed: ${subsResult.billingResult.debugMessage}")
+
+                mBillingClient.queryPurchasesAsync(subsParams) { subsResult, subsPurchases ->
+                    try {
+                        if (subsResult.isOk()) {
+                            processPurchases(
+                                subsPurchases,
+                                isRestore = true,
+                                sourceProductType = BillingClient.ProductType.SUBS
+                            )
+                        } else {
+                            log("queryPurchases SUBS failed: ${subsResult.debugMessage}")
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to process subscription restore", e)
+                        updateFailedPurchase(billingResponseCode = BillingClient.BillingResponseCode.ERROR)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to process in-app restore", e)
+                updateFailedPurchase(billingResponseCode = BillingClient.BillingResponseCode.ERROR)
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to restore active purchases", e)
-            updateFailedPurchase(billingResponseCode = BillingClient.BillingResponseCode.ERROR)
         }
     }
 
@@ -205,7 +215,7 @@ class BillingService(
             BillingClient.BillingResponseCode.USER_CANCELED -> log("onPurchasesUpdated: user canceled the purchase")
             BillingClient.BillingResponseCode.ITEM_ALREADY_OWNED -> {
                 log("onPurchasesUpdated: item already owned; refreshing active purchases")
-                CoroutineScope(Dispatchers.Main).launch { queryPurchases() }
+                queryPurchases()
             }
             BillingClient.BillingResponseCode.DEVELOPER_ERROR -> Log.e(
                 TAG,
