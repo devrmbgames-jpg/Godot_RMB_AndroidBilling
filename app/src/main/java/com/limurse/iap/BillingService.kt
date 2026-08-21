@@ -246,6 +246,16 @@ class BillingService(
                 }
 
                 val resolvedProductType = sourceProductType ?: resolveProductType(sku)
+
+                // Kidduca's Godot transaction container asserts that every transaction references a
+                // product already present in its configured catalog. Billing can still return legacy
+                // owned SKUs that are no longer configured by the game. Restore configured products
+                // even when ProductDetails is unfetched, but do not publish unknown legacy SKUs to Godot.
+                if (isRestore && !isConfiguredProduct(sku, resolvedProductType)) {
+                    Log.w(TAG, "Skipping restore for unconfigured sku=$sku type=$resolvedProductType")
+                    continue@purchases
+                }
+
                 val isProductConsumable = consumableKeys.contains(sku)
                 val purchaseInfo = getPurchaseInfo(purchase)
 
@@ -289,6 +299,12 @@ class BillingService(
         subscriptionSkuKeys.contains(sku) -> BillingClient.ProductType.SUBS
         nonConsumableKeys.contains(sku) || consumableKeys.contains(sku) -> BillingClient.ProductType.INAPP
         else -> productDetails[sku]?.productType
+    }
+
+    private fun isConfiguredProduct(sku: String, productType: String?): Boolean = when (productType) {
+        BillingClient.ProductType.INAPP -> nonConsumableKeys.contains(sku) || consumableKeys.contains(sku)
+        BillingClient.ProductType.SUBS -> subscriptionSkuKeys.contains(sku)
+        else -> nonConsumableKeys.contains(sku) || consumableKeys.contains(sku) || subscriptionSkuKeys.contains(sku)
     }
 
     private fun getPurchaseInfo(purchase: Purchase): DataWrappers.PurchaseInfo = DataWrappers.PurchaseInfo(
