@@ -37,11 +37,11 @@ abstract class IBillingService {
     }
 
     /**
-     * @param purchaseInfo Product specifier
-     * @param isRestore Flag indicating whether it's a fresh purchase or restored product
+     * Keep the callback semantics used by the Billing 7 implementation: listeners are always
+     * invoked from a posted main-loop task, never re-entrantly from a Billing callback.
      */
     fun productOwned(purchaseInfo: DataWrappers.PurchaseInfo, isRestore: Boolean) {
-        runOnUiThread {
+        postToUiThread {
             for (purchaseServiceListener in purchaseServiceListeners.toList()) {
                 if (isRestore) {
                     purchaseServiceListener.onProductRestored(purchaseInfo)
@@ -52,12 +52,8 @@ abstract class IBillingService {
         }
     }
 
-    /**
-     * @param purchaseInfo Subscription specifier
-     * @param isRestore Flag indicating whether it's a fresh purchase or restored subscription
-     */
     fun subscriptionOwned(purchaseInfo: DataWrappers.PurchaseInfo, isRestore: Boolean) {
-        runOnUiThread {
+        postToUiThread {
             for (subscriptionServiceListener in subscriptionServiceListeners.toList()) {
                 if (isRestore) {
                     subscriptionServiceListener.onSubscriptionRestored(purchaseInfo)
@@ -69,7 +65,7 @@ abstract class IBillingService {
     }
 
     fun isBillingClientConnected(status: Boolean, responseCode: Int) {
-        runOnUiThread {
+        postToUiThread {
             for (billingServiceListener in billingClientConnectedListeners.toList()) {
                 billingServiceListener.onConnected(status, responseCode)
             }
@@ -77,15 +73,14 @@ abstract class IBillingService {
     }
 
     /**
-     * Product callbacks are dispatched immediately when Billing already called us on the main
-     * thread. Routing by ProductType prevents a single SKU from being emitted twice to Godot with
-     * conflicting type_product values.
+     * Routing by ProductType prevents duplicate product events with conflicting type_product values.
+     * Delivery itself remains deferred exactly like the previous Billing 7 bridge.
      */
     fun updatePrices(
         iapKeyPrices: Map<String, List<DataWrappers.ProductDetails>>,
         productType: String? = null
     ) {
-        runOnUiThread {
+        postToUiThread {
             when (productType) {
                 BillingClient.ProductType.INAPP -> {
                     for (listener in purchaseServiceListeners.toList()) {
@@ -98,7 +93,7 @@ abstract class IBillingService {
                     }
                 }
                 else -> {
-                    // Preserve the previous internal API behavior for any caller that doesn't pass a type.
+                    // Preserve the previous internal API behavior for callers that do not pass a type.
                     for (listener in purchaseServiceListeners.toList()) {
                         listener.onPricesUpdated(iapKeyPrices)
                     }
@@ -117,7 +112,7 @@ abstract class IBillingService {
     }
 
     fun updateFailedPurchase(purchaseInfo: DataWrappers.PurchaseInfo? = null, billingResponseCode: Int? = null) {
-        runOnUiThread {
+        postToUiThread {
             for (billingServiceListener in purchaseServiceListeners.toList()) {
                 billingServiceListener.onPurchaseFailed(purchaseInfo, billingResponseCode)
             }
@@ -146,10 +141,6 @@ private val uiHandler: Handler by lazy { Handler(Looper.getMainLooper()) }
 
 fun findUiHandler(): Handler = uiHandler
 
-fun runOnUiThread(action: () -> Unit) {
-    if (Looper.myLooper() == Looper.getMainLooper()) {
-        action()
-    } else {
-        uiHandler.post(action)
-    }
+fun postToUiThread(action: () -> Unit) {
+    uiHandler.post(action)
 }
