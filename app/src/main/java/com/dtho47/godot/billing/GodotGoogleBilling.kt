@@ -221,9 +221,9 @@ class GodotGoogleBilling(godot: Godot) : GodotPlugin(godot) {
         dict["package_name"] = purchaseInfo.packageName
         dict["response_code"] = responseCode
 
-        // Google explicitly allows purchases without an orderId (for example promo-code purchases).
-        // Never pass a Kotlin null through Godot 3's Java/JNI Dictionary bridge.
-        dict["order_id"] = purchaseInfo.orderId.orEmpty()
+        // Kidduca stores transactions by transaction_id and expects a non-null String. Some valid
+        // Google Play purchases have no orderId, so use the unique purchase token as a stable fallback.
+        dict["order_id"] = purchaseInfo.orderId ?: purchaseInfo.purchaseToken
         dict["json"] = purchaseInfo.originalJson
         return dict
     }
