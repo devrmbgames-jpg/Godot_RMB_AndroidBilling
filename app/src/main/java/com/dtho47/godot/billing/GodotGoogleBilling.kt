@@ -3,122 +3,50 @@ package com.dtho47.godot.billing
 import android.util.Log
 import com.limurse.iap.BillingClientConnectionListener
 import com.limurse.iap.BillingClientGetCountryListener
-import org.godotengine.godot.Godot
-import org.godotengine.godot.plugin.GodotPlugin
-import org.godotengine.godot.plugin.SignalInfo
-import org.godotengine.godot.plugin.UsedByGodot
-import org.godotengine.godot.Dictionary
-
 import com.limurse.iap.DataWrappers
 import com.limurse.iap.IapConnector
 import com.limurse.iap.PurchaseServiceListener
 import com.limurse.iap.SubscriptionServiceListener
-
-
+import org.godotengine.godot.Dictionary
+import org.godotengine.godot.Godot
+import org.godotengine.godot.plugin.GodotPlugin
+import org.godotengine.godot.plugin.SignalInfo
+import org.godotengine.godot.plugin.UsedByGodot
 
 class GodotGoogleBilling(godot: Godot) : GodotPlugin(godot) {
     private val tag: String = "GodotGoogleBilling"
 
-
-
-/*
-
-    const val TYPE_IN_APP = 0
-    const val TYPE_SUBS = 3
-    signal prices_in_app_update(info: Dictionary)
-    {
-        sku : String,
-        type_product : Int,
-        title: String,
-        description: String,
-        price: String,
-        price_amount: Float,
-        currency_code: String,
-        billing_cycle_count: Int,
-        billing_period: String,
-        recurrence_mode: Int,
-    }
-
-
-    signal product_purchased(transaction: Dictionary)
-    {
-        sku: String,
-        type_product: Int,
-        is_acknowledged: Boolean,
-        is_auto_renewing: Boolean,
-        purchase_state: Int,
-        purchase_token: String,
-        signature: String,
-        package_name: String,
-        response_code: Int, #OK
-    }
-
-    signal product_restored(transaction: Dictionary)
-    {
-        sku: String,
-        type_product: Int,
-        is_acknowledged: Boolean,
-        is_auto_renewing: Boolean,
-        purchase_state: Int,
-        purchase_token: String,
-        signature: String,
-        package_name: String,
-        response_code: Int, #OK
-    }
-
-    signal product_failed(transaction: Dictionary)
-    {
-        sku: String,
-        type_product: Int,
-        is_acknowledged: Boolean,
-        is_auto_renewing: Boolean,
-        purchase_state: Int,
-        purchase_token: String,
-        signature: String,
-        package_name: String,
-        response_code: Int, #ERR
-    }
-
-    func build(non_consumables_list: Array, consumables_list: Array, subs_list: Array, license_key: String)
-    func purchase(sku: String)
-    func subscribe(sku: String)
-    func unsubscribe(sku: String)
-
-    */
-
-
-    private val signalPricesUpdate: SignalInfo = SignalInfo("prices_in_app_update", Object::class.java)
-    private val signalProductPurchased: SignalInfo = SignalInfo("product_purchased", Object::class.java)
-    private val signalProductRestored: SignalInfo = SignalInfo("product_restored", Object::class.java)
-    private val signalProductFailed: SignalInfo = SignalInfo("product_failed", Object::class.java)
-    private val signalCountryCodeUpdate: SignalInfo = SignalInfo("country_code_update", String::class.java)
+    private val signalPricesUpdate = SignalInfo("prices_in_app_update", Object::class.java)
+    private val signalProductPurchased = SignalInfo("product_purchased", Object::class.java)
+    private val signalProductRestored = SignalInfo("product_restored", Object::class.java)
+    private val signalProductFailed = SignalInfo("product_failed", Object::class.java)
+    private val signalCountryCodeUpdate = SignalInfo("country_code_update", String::class.java)
 
     private lateinit var iapConnector: IapConnector
     private var countryCode: String = "US"
+
     companion object {
         const val TYPE_IN_APP = 0
         const val TYPE_SUBS = 3
-
         const val ERR_OK = 0
-
-    }
-    override fun getPluginName(): String {
-        return tag
     }
 
-    override fun getPluginSignals(): Set<SignalInfo> {
-        return setOf(
-            signalPricesUpdate,
-            signalProductPurchased,
-            signalProductRestored,
-            signalProductFailed,
-            signalCountryCodeUpdate
-        )
-    }
+    override fun getPluginName(): String = tag
 
+    override fun getPluginSignals(): Set<SignalInfo> = setOf(
+        signalPricesUpdate,
+        signalProductPurchased,
+        signalProductRestored,
+        signalProductFailed,
+        signalCountryCodeUpdate
+    )
 
     @UsedByGodot
-    fun get_country() : String {
+    fun get_country(): String {
+        if (!::iapConnector.isInitialized) {
+            Log.w(tag, "get_country called before build; returning cached country code")
+            return countryCode
+        }
 
         iapConnector.getCountryCode(object : BillingClientGetCountryListener {
             override fun onResult(countryCode: String) {
@@ -126,248 +54,177 @@ class GodotGoogleBilling(godot: Godot) : GodotPlugin(godot) {
                 emitSignal(godot, tag, signalCountryCodeUpdate, countryCode)
             }
         })
-
         return countryCode
     }
-    @UsedByGodot
-    fun build(nonConsumablesList: Array<String>, consumablesList: Array<String>, subsList: Array<String>, licenseKey: String) {
 
+    @UsedByGodot
+    fun build(
+        nonConsumablesList: Array<String>,
+        consumablesList: Array<String>,
+        subsList: Array<String>,
+        licenseKey: String
+    ) {
         Log.i(tag, "build from sku nonConsumablesList: ${nonConsumablesList.toList()}")
         Log.i(tag, "build from sku consumablesList: ${consumablesList.toList()}")
         Log.i(tag, "build from sku subsList: ${subsList.toList()}")
 
+        // BillingClient recommends a single active client. Rebuilding the Godot singleton should not
+        // leave an older connector bound to Google Play and producing duplicate callbacks.
+        if (::iapConnector.isInitialized) {
+            iapConnector.destroy()
+        }
+
         iapConnector = IapConnector(
-            context = godot.requireActivity(), // activity / context
-            nonConsumableKeys = nonConsumablesList.toList(), // pass the list of non-consumables
-            consumableKeys = consumablesList.toList(), // pass the list of consumables
-            subscriptionKeys = subsList.toList(), // pass the list of subscriptions
-            key = licenseKey.ifEmpty { null }, // pass your app's license key
-            enableLogging = true // to enable / disable logging
+            context = godot.requireActivity(),
+            nonConsumableKeys = nonConsumablesList.toList(),
+            consumableKeys = consumablesList.toList(),
+            subscriptionKeys = subsList.toList(),
+            key = licenseKey.ifEmpty { null },
+            enableLogging = true,
+            autoStart = false
         )
 
-
-        iapConnector.addBillingClientConnectionListener(object  : BillingClientConnectionListener {
+        // Register every Godot-facing listener before starting BillingClient. A fast Play Store
+        // connection must not be able to publish product/restore callbacks before listeners exist.
+        iapConnector.addBillingClientConnectionListener(object : BillingClientConnectionListener {
             override fun onConnected(status: Boolean, billingResponseCode: Int) {
-                Log.i(tag, " billing connected - $status. Code - $billingResponseCode")
-                if (status) {
-                    //get_country()
-                }
+                Log.i(tag, "billing connected - $status. Code - $billingResponseCode")
             }
         })
 
         iapConnector.addPurchaseListener(object : PurchaseServiceListener {
             override fun onPricesUpdated(iapKeyPrices: Map<String, List<DataWrappers.ProductDetails>>) {
-                // list of available products will be received here, so you can update UI with prices if needed
-
-                for (pair in iapKeyPrices)
-                {
-                    for (details in pair.value)
-                    {
-                        val dict = Dictionary()
-
-
-                        dict["sku"] = pair.key
-                        dict["type_product"] = TYPE_IN_APP
-                        dict["title"] = details.title
-                        dict["details"] = details.description
-                        dict["price"] = details.price
-                        dict["price_amount"] = details.priceAmount
-                        dict["currency_code"] = details.priceCurrencyCode
-                        dict["billing_cycle_count"] = details.billingCycleCount
-                        dict["billing_period"] = details.billingPeriod
-                        dict["recurrence_mode"] = details.recurrenceMode
-
-                        emitSignal(godot, tag, signalPricesUpdate, dict)
+                for ((sku, priceDetails) in iapKeyPrices) {
+                    for (details in priceDetails) {
+                        emitSignal(godot, tag, signalPricesUpdate, createPriceDictionary(sku, TYPE_IN_APP, details))
                     }
                 }
-
             }
 
             override fun onProductPurchased(purchaseInfo: DataWrappers.PurchaseInfo) {
-                // will be triggered whenever purchase succeeded
-
-                val dict = Dictionary()
-
-                dict["sku"] = purchaseInfo.sku
-                dict["type_product"] = TYPE_IN_APP
-                dict["is_acknowledged"] = purchaseInfo.isAcknowledged
-                dict["is_auto_renewing"] = purchaseInfo.isAutoRenewing
-                dict["purchase_state"] = purchaseInfo.purchaseState
-                dict["purchase_token"] = purchaseInfo.purchaseToken
-                dict["signature"] = purchaseInfo.signature
-                dict["package_name"] = purchaseInfo.packageName
-                dict["response_code"] = ERR_OK
-                dict["order_id"] = purchaseInfo.orderId
-                dict["json"] = purchaseInfo.originalJson
-
-
-                emitSignal(godot, tag, signalProductPurchased, dict)
+                emitSignal(godot, tag, signalProductPurchased, createTransactionDictionary(purchaseInfo, TYPE_IN_APP, ERR_OK))
             }
 
             override fun onProductRestored(purchaseInfo: DataWrappers.PurchaseInfo) {
-                // will be triggered fetching owned products using IapConnector
-
-                val dict = Dictionary()
-
-                dict["sku"] = purchaseInfo.sku
-                dict["type_product"] = TYPE_IN_APP
-                dict["is_acknowledged"] = purchaseInfo.isAcknowledged
-                dict["is_auto_renewing"] = purchaseInfo.isAutoRenewing
-                dict["purchase_state"] = purchaseInfo.purchaseState
-                dict["purchase_token"] = purchaseInfo.purchaseToken
-                dict["signature"] = purchaseInfo.signature
-                dict["package_name"] = purchaseInfo.packageName
-                dict["response_code"] = ERR_OK
-                dict["order_id"] = purchaseInfo.orderId
-                dict["json"] = purchaseInfo.originalJson
-
-
-                emitSignal(godot, tag, signalProductRestored, dict)
+                emitSignal(godot, tag, signalProductRestored, createTransactionDictionary(purchaseInfo, TYPE_IN_APP, ERR_OK))
             }
 
-            override fun onPurchaseFailed(
-                purchaseInfo: DataWrappers.PurchaseInfo?,
-                billingResponseCode: Int?
-            ) {
+            override fun onPurchaseFailed(purchaseInfo: DataWrappers.PurchaseInfo?, billingResponseCode: Int?) {
                 if (purchaseInfo != null) {
-                    var code: Int = -1
-                    if (billingResponseCode != null) {
-                        code = billingResponseCode
-                    }
-
-                    val dict = Dictionary()
-
-                    dict["sku"] = purchaseInfo.sku
-                    dict["type_product"] = TYPE_IN_APP
-                    dict["is_acknowledged"] = purchaseInfo.isAcknowledged
-                    dict["is_auto_renewing"] = purchaseInfo.isAutoRenewing
-                    dict["purchase_state"] = purchaseInfo.purchaseState
-                    dict["purchase_token"] = purchaseInfo.purchaseToken
-                    dict["signature"] = purchaseInfo.signature
-                    dict["package_name"] = purchaseInfo.packageName
-                    dict["response_code"] = code
-                    dict["order_id"] = purchaseInfo.orderId
-                    dict["json"] = purchaseInfo.originalJson
-
-                    emitSignal(godot, tag, signalProductFailed, dict)
+                    emitSignal(
+                        godot,
+                        tag,
+                        signalProductFailed,
+                        createTransactionDictionary(purchaseInfo, TYPE_IN_APP, billingResponseCode ?: -1)
+                    )
                 }
             }
         })
 
         iapConnector.addSubscriptionListener(object : SubscriptionServiceListener {
             override fun onSubscriptionRestored(purchaseInfo: DataWrappers.PurchaseInfo) {
-                val dict = Dictionary()
-
-                dict["sku"] = purchaseInfo.sku
-                dict["type_product"] = TYPE_SUBS
-                dict["is_acknowledged"] = purchaseInfo.isAcknowledged
-                dict["is_auto_renewing"] = purchaseInfo.isAutoRenewing
-                dict["purchase_state"] = purchaseInfo.purchaseState
-                dict["purchase_token"] = purchaseInfo.purchaseToken
-                dict["signature"] = purchaseInfo.signature
-                dict["package_name"] = purchaseInfo.packageName
-                dict["response_code"] = ERR_OK
-                dict["order_id"] = purchaseInfo.orderId
-                dict["json"] = purchaseInfo.originalJson
-
-
-                emitSignal(godot, tag, signalProductRestored, dict)
+                emitSignal(godot, tag, signalProductRestored, createTransactionDictionary(purchaseInfo, TYPE_SUBS, ERR_OK))
             }
 
             override fun onSubscriptionPurchased(purchaseInfo: DataWrappers.PurchaseInfo) {
-                // will be triggered whenever subscription succeeded
-                val dict = Dictionary()
-
-                dict["sku"] = purchaseInfo.sku
-                dict["type_product"] = TYPE_SUBS
-                dict["is_acknowledged"] = purchaseInfo.isAcknowledged
-                dict["is_auto_renewing"] = purchaseInfo.isAutoRenewing
-                dict["purchase_state"] = purchaseInfo.purchaseState
-                dict["purchase_token"] = purchaseInfo.purchaseToken
-                dict["signature"] = purchaseInfo.signature
-                dict["package_name"] = purchaseInfo.packageName
-                dict["response_code"] = ERR_OK
-                dict["order_id"] = purchaseInfo.orderId
-                dict["json"] = purchaseInfo.originalJson
-
-
-                emitSignal(godot, tag, signalProductPurchased, dict)
+                emitSignal(godot, tag, signalProductPurchased, createTransactionDictionary(purchaseInfo, TYPE_SUBS, ERR_OK))
             }
 
             override fun onPricesUpdated(iapKeyPrices: Map<String, List<DataWrappers.ProductDetails>>) {
-                // list of available products will be received here, so you can update UI with prices if needed
-                for (pair in iapKeyPrices)
-                {
-                    for (details in pair.value)
-                    {
-                        val dict = Dictionary()
-
-
-                        dict["sku"] = pair.key
-                        dict["type_product"] = TYPE_SUBS
-                        dict["title"] = details.title
-                        dict["details"] = details.description
-                        dict["price"] = details.price
-                        dict["price_amount"] = details.priceAmount
-                        dict["currency_code"] = details.priceCurrencyCode
-                        dict["billing_cycle_count"] = details.billingCycleCount
-                        dict["billing_period"] = details.billingPeriod
-                        dict["recurrence_mode"] = details.recurrenceMode
-
-
-                        emitSignal(godot, tag, signalPricesUpdate, dict)
+                for ((sku, priceDetails) in iapKeyPrices) {
+                    for (details in priceDetails) {
+                        emitSignal(godot, tag, signalPricesUpdate, createPriceDictionary(sku, TYPE_SUBS, details))
                     }
                 }
             }
 
-            override fun onPurchaseFailed(
-                purchaseInfo: DataWrappers.PurchaseInfo?,
-                billingResponseCode: Int?
-            ) {
+            override fun onPurchaseFailed(purchaseInfo: DataWrappers.PurchaseInfo?, billingResponseCode: Int?) {
                 if (purchaseInfo != null) {
-                    var code: Int = -1
-                    if (billingResponseCode != null) {
-                        code = billingResponseCode
-                    }
-                    val dict = Dictionary()
-
-                    dict["sku"] = purchaseInfo.sku
-                    dict["type_product"] = TYPE_SUBS
-                    dict["is_acknowledged"] = purchaseInfo.isAcknowledged
-                    dict["is_auto_renewing"] = purchaseInfo.isAutoRenewing
-                    dict["purchase_state"] = purchaseInfo.purchaseState
-                    dict["purchase_token"] = purchaseInfo.purchaseToken
-                    dict["signature"] = purchaseInfo.signature
-                    dict["package_name"] = purchaseInfo.packageName
-                    dict["response_code"] = code
-                    dict["order_id"] = purchaseInfo.orderId
-                    dict["json"] = purchaseInfo.originalJson
-
-                    emitSignal(godot, tag, signalProductFailed, dict)
+                    emitSignal(
+                        godot,
+                        tag,
+                        signalProductFailed,
+                        createTransactionDictionary(purchaseInfo, TYPE_SUBS, billingResponseCode ?: -1)
+                    )
                 }
             }
         })
 
+        iapConnector.start()
     }
 
     @UsedByGodot
     fun purchase(sku: String) {
+        if (!::iapConnector.isInitialized) {
+            Log.e(tag, "purchase called before build")
+            return
+        }
         iapConnector.purchase(godot.requireActivity(), sku)
     }
 
     @UsedByGodot
     fun subscribe(sku: String) {
+        if (!::iapConnector.isInitialized) {
+            Log.e(tag, "subscribe called before build")
+            return
+        }
         iapConnector.subscribe(godot.requireActivity(), sku)
     }
 
     @UsedByGodot
     fun unsubscribe(sku: String) {
+        if (!::iapConnector.isInitialized) {
+            Log.e(tag, "unsubscribe called before build")
+            return
+        }
         iapConnector.unsubscribe(godot.requireActivity(), sku)
     }
 
+    private fun createPriceDictionary(
+        sku: String,
+        typeProduct: Int,
+        details: DataWrappers.ProductDetails
+    ): Dictionary {
+        val description = details.description.orEmpty()
+        val dict = Dictionary()
+        dict["sku"] = sku
+        dict["type_product"] = typeProduct
+        dict["title"] = details.title.orEmpty()
 
-    //GODOT
+        // `details` is the historical native key. `description` matches the documented/GDScript
+        // wrapper name. Keep both so existing Godot code remains compatible.
+        dict["details"] = description
+        dict["description"] = description
 
+        dict["price"] = details.price.orEmpty()
+        dict["price_amount"] = details.priceAmount ?: 0.0
+        dict["currency_code"] = details.priceCurrencyCode.orEmpty()
+        dict["billing_cycle_count"] = details.billingCycleCount ?: 0
+        dict["billing_period"] = details.billingPeriod.orEmpty()
+        dict["recurrence_mode"] = details.recurrenceMode ?: 0
+        return dict
+    }
 
+    private fun createTransactionDictionary(
+        purchaseInfo: DataWrappers.PurchaseInfo,
+        typeProduct: Int,
+        responseCode: Int
+    ): Dictionary {
+        val dict = Dictionary()
+        dict["sku"] = purchaseInfo.sku
+        dict["type_product"] = typeProduct
+        dict["is_acknowledged"] = purchaseInfo.isAcknowledged
+        dict["is_auto_renewing"] = purchaseInfo.isAutoRenewing
+        dict["purchase_state"] = purchaseInfo.purchaseState
+        dict["purchase_token"] = purchaseInfo.purchaseToken
+        dict["signature"] = purchaseInfo.signature
+        dict["package_name"] = purchaseInfo.packageName
+        dict["response_code"] = responseCode
 
+        // Google explicitly allows purchases without an orderId (for example promo-code purchases).
+        // Never pass a Kotlin null through Godot 3's Java/JNI Dictionary bridge.
+        dict["order_id"] = purchaseInfo.orderId.orEmpty()
+        dict["json"] = purchaseInfo.originalJson
+        return dict
+    }
 }
