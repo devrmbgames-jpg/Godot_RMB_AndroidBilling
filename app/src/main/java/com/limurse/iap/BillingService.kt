@@ -37,6 +37,7 @@ class BillingService(
         mBillingClient = BillingClient.newBuilder(context)
             .setListener(this)
             .enablePendingPurchases(pendingPurchasesParams)
+            .enableAutoServiceReconnection()
             .build()
 
         mBillingClient.startConnection(object : BillingClientStateListener {
@@ -52,6 +53,8 @@ class BillingService(
                     nonConsumableKeys.queryProductDetails(BillingClient.ProductType.INAPP) {
                         consumableKeys.queryProductDetails(BillingClient.ProductType.INAPP) {
                             subscriptionSkuKeys.queryProductDetails(BillingClient.ProductType.SUBS) {
+                                // Product callbacks above are dispatched before restore starts. This is
+                                // important for Godot clients that create product objects from price signals.
                                 CoroutineScope(Dispatchers.IO).launch {
                                     queryPurchases()
                                 }
@@ -70,26 +73,39 @@ class BillingService(
      * New purchases are delivered through PurchasesUpdatedListener.
      */
     private suspend fun queryPurchases() {
-        val inAppResult: PurchasesResult = mBillingClient.queryPurchasesAsync(
-            QueryPurchasesParams.newBuilder()
-                .setProductType(BillingClient.ProductType.INAPP)
-                .build()
-        )
-        if (inAppResult.billingResult.isOk()) {
-            processPurchases(inAppResult.purchasesList, isRestore = true)
-        } else {
-            log("queryPurchases INAPP failed: ${inAppResult.billingResult.debugMessage}")
-        }
+        try {
+            val inAppResult: PurchasesResult = mBillingClient.queryPurchasesAsync(
+                QueryPurchasesParams.newBuilder()
+                    .setProductType(BillingClient.ProductType.INAPP)
+                    .build()
+            )
+            if (inAppResult.billingResult.isOk()) {
+                processPurchases(
+                    inAppResult.purchasesList,
+                    isRestore = true,
+                    sourceProductType = BillingClient.ProductType.INAPP
+                )
+            } else {
+                log("queryPurchases INAPP failed: ${inAppResult.billingResult.debugMessage}")
+            }
 
-        val subsResult: PurchasesResult = mBillingClient.queryPurchasesAsync(
-            QueryPurchasesParams.newBuilder()
-                .setProductType(BillingClient.ProductType.SUBS)
-                .build()
-        )
-        if (subsResult.billingResult.isOk()) {
-            processPurchases(subsResult.purchasesList, isRestore = true)
-        } else {
-            log("queryPurchases SUBS failed: ${subsResult.billingResult.debugMessage}")
+            val subsResult: PurchasesResult = mBillingClient.queryPurchasesAsync(
+                QueryPurchasesParams.newBuilder()
+                    .setProductType(BillingClient.ProductType.SUBS)
+                    .build()
+            )
+            if (subsResult.billingResult.isOk()) {
+                processPurchases(
+                    subsResult.purchasesList,
+                    isRestore = true,
+                    sourceProductType = BillingClient.ProductType.SUBS
+                )
+            } else {
+                log("queryPurchases SUBS failed: ${subsResult.billingResult.debugMessage}")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to restore active purchases", e)
+            updateFailedPurchase(billingResponseCode = BillingClient.BillingResponseCode.ERROR)
         }
     }
 
@@ -200,7 +216,7 @@ class BillingService(
         log("onPurchasesUpdated: responseCode:$responseCode debugMessage:${billingResult.debugMessage}")
 
         if (!billingResult.isOk()) {
-            updateFailedPurchases(purchases?.map { getPurchaseInfo(it) }, responseCode)
+            updateFailedPurchases(purchases?.mapNotNull { safePurchaseInfo(it) }, responseCode)
         }
 
         when (responseCode) {
@@ -220,7 +236,11 @@ class BillingService(
         }
     }
 
-    private fun processPurchases(purchasesList: List<Purchase>?, isRestore: Boolean = false) {
+    private fun processPurchases(
+        purchasesList: List<Purchase>?,
+        isRestore: Boolean = false,
+        sourceProductType: String? = null
+    ) {
         if (purchasesList.isNullOrEmpty()) {
             log("processPurchases: no purchases")
             return
@@ -228,72 +248,86 @@ class BillingService(
 
         log("processPurchases: ${purchasesList.size} purchase(s)")
         purchases@ for (purchase in purchasesList) {
-            val sku = purchase.products.firstOrNull()
-            if (sku == null) {
-                Log.e(TAG, "processPurchases failed: purchase has no products: $purchase")
-                updateFailedPurchase(getPurchaseInfo(purchase))
-                continue@purchases
-            }
-
-            // Never grant entitlement while payment is pending. Google Play will deliver/query the
-            // purchase again after it transitions to PURCHASED.
-            if (purchase.purchaseState == Purchase.PurchaseState.PENDING) {
-                log("Purchase is pending; entitlement is deferred for sku: $sku")
-                continue@purchases
-            }
-
-            if (purchase.purchaseState != Purchase.PurchaseState.PURCHASED || !sku.isProductReady()) {
-                Log.e(
-                    TAG,
-                    "processPurchases failed. sku:$sku state:${purchase.purchaseState} isProductReady:${sku.isProductReady()}"
-                )
-                updateFailedPurchase(getPurchaseInfo(purchase))
-                continue@purchases
-            }
-
-            if (!isSignatureValid(purchase)) {
-                log("processPurchases. Signature is not valid for: $purchase")
-                updateFailedPurchase(getPurchaseInfo(purchase))
-                continue@purchases
-            }
-
-            val details = productDetails[sku]
-            val isProductConsumable = consumableKeys.contains(sku)
-
-            when (details?.productType) {
-                BillingClient.ProductType.INAPP -> {
-                    if (isProductConsumable) {
-                        mBillingClient.consumeAsync(
-                            ConsumeParams.newBuilder()
-                                .setPurchaseToken(purchase.purchaseToken)
-                                .build()
-                        ) { billingResult, _ ->
-                            if (billingResult.isOk()) {
-                                productOwned(getPurchaseInfo(purchase), false)
-                            } else {
-                                Log.d(TAG, "Consumption failed: ${billingResult.debugMessage}")
-                                updateFailedPurchase(getPurchaseInfo(purchase), billingResult.responseCode)
-                            }
-                        }
-                    } else {
-                        productOwned(getPurchaseInfo(purchase), isRestore)
-                    }
-                }
-                BillingClient.ProductType.SUBS -> subscriptionOwned(getPurchaseInfo(purchase), isRestore)
-                else -> {
-                    Log.e(TAG, "No ProductDetails type found for purchased sku: $sku")
-                    updateFailedPurchase(getPurchaseInfo(purchase))
+            try {
+                val sku = purchase.products.firstOrNull()
+                if (sku.isNullOrEmpty()) {
+                    Log.e(TAG, "processPurchases failed: purchase has no products: $purchase")
+                    updateFailedPurchase(safePurchaseInfo(purchase))
                     continue@purchases
                 }
-            }
 
-            // consumeAsync implicitly acknowledges consumables. Everything else must be acknowledged.
-            if (!purchase.isAcknowledged && !isProductConsumable) {
-                val acknowledgePurchaseParams = AcknowledgePurchaseParams.newBuilder()
-                    .setPurchaseToken(purchase.purchaseToken)
-                    .build()
-                mBillingClient.acknowledgePurchase(acknowledgePurchaseParams, this)
+                // Never grant entitlement while payment is pending. Google Play will deliver/query the
+                // purchase again after it transitions to PURCHASED.
+                if (purchase.purchaseState == Purchase.PurchaseState.PENDING) {
+                    log("Purchase is pending; entitlement is deferred for sku: $sku")
+                    continue@purchases
+                }
+
+                if (purchase.purchaseState != Purchase.PurchaseState.PURCHASED) {
+                    Log.e(TAG, "processPurchases failed. sku:$sku state:${purchase.purchaseState}")
+                    updateFailedPurchase(safePurchaseInfo(purchase))
+                    continue@purchases
+                }
+
+                if (!isSignatureValid(purchase)) {
+                    log("processPurchases. Signature is not valid for: $purchase")
+                    updateFailedPurchase(safePurchaseInfo(purchase))
+                    continue@purchases
+                }
+
+                // Restoration must not depend on ProductDetails being fetchable. Billing 9 can return
+                // an UnfetchedProduct (for example NO_ELIGIBLE_OFFER) for a product the user already owns.
+                val resolvedProductType = sourceProductType ?: resolveProductType(sku)
+                val isProductConsumable = consumableKeys.contains(sku)
+                val purchaseInfo = getPurchaseInfo(purchase)
+
+                when (resolvedProductType) {
+                    BillingClient.ProductType.INAPP -> {
+                        if (isProductConsumable) {
+                            mBillingClient.consumeAsync(
+                                ConsumeParams.newBuilder()
+                                    .setPurchaseToken(purchase.purchaseToken)
+                                    .build()
+                            ) { billingResult, _ ->
+                                if (billingResult.isOk()) {
+                                    // Keep historical behavior for recovered unconsumed consumables.
+                                    productOwned(purchaseInfo, false)
+                                } else {
+                                    Log.d(TAG, "Consumption failed: ${billingResult.debugMessage}")
+                                    updateFailedPurchase(purchaseInfo, billingResult.responseCode)
+                                }
+                            }
+                        } else {
+                            productOwned(purchaseInfo, isRestore)
+                        }
+                    }
+                    BillingClient.ProductType.SUBS -> subscriptionOwned(purchaseInfo, isRestore)
+                    else -> {
+                        Log.e(TAG, "Unable to resolve product type for purchased sku: $sku")
+                        updateFailedPurchase(purchaseInfo)
+                        continue@purchases
+                    }
+                }
+
+                // consumeAsync implicitly acknowledges consumables. Everything else must be acknowledged.
+                if (!purchase.isAcknowledged && !isProductConsumable) {
+                    val acknowledgePurchaseParams = AcknowledgePurchaseParams.newBuilder()
+                        .setPurchaseToken(purchase.purchaseToken)
+                        .build()
+                    mBillingClient.acknowledgePurchase(acknowledgePurchaseParams, this)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to process purchase safely", e)
+                updateFailedPurchase(safePurchaseInfo(purchase))
             }
+        }
+    }
+
+    private fun resolveProductType(sku: String): String? {
+        return when {
+            subscriptionSkuKeys.contains(sku) -> BillingClient.ProductType.SUBS
+            nonConsumableKeys.contains(sku) || consumableKeys.contains(sku) -> BillingClient.ProductType.INAPP
+            else -> productDetails[sku]?.productType
         }
     }
 
@@ -314,9 +348,23 @@ class BillingService(
         )
     }
 
+    private fun safePurchaseInfo(purchase: Purchase): DataWrappers.PurchaseInfo? {
+        return try {
+            getPurchaseInfo(purchase)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to convert Purchase to PurchaseInfo", e)
+            null
+        }
+    }
+
     private fun isSignatureValid(purchase: Purchase): Boolean {
         val key = decodedKey ?: return true
-        return Security.verifyPurchase(key, purchase.originalJson, purchase.signature)
+        return try {
+            Security.verifyPurchase(key, purchase.originalJson, purchase.signature)
+        } catch (e: Exception) {
+            Log.e(TAG, "Purchase signature verification failed with an exception", e)
+            false
+        }
     }
 
     /** Query ProductDetails and update the plugin's existing price callbacks. */
@@ -342,29 +390,35 @@ class BillingService(
         val params = QueryProductDetailsParams.newBuilder().setProductList(productList).build()
 
         mBillingClient.queryProductDetailsAsync(params) { billingResult, queryResult ->
-            if (billingResult.isOk()) {
-                isBillingClientConnected(true, billingResult.responseCode)
+            try {
+                if (billingResult.isOk()) {
+                    isBillingClientConnected(true, billingResult.responseCode)
 
-                queryResult.productDetailsList.forEach { details ->
-                    productDetails[details.productId] = details
-                }
+                    queryResult.productDetailsList.forEach { details ->
+                        productDetails[details.productId] = details
+                    }
 
-                queryResult.unfetchedProductList.forEach { unfetched ->
-                    productDetails[unfetched.productId] = null
-                    log(
-                        "Product not fetched: id=${unfetched.productId}, type=${unfetched.productType}, " +
-                            "status=${unfetched.statusCode}"
-                    )
-                }
+                    queryResult.unfetchedProductList.forEach { unfetched ->
+                        productDetails[unfetched.productId] = null
+                        log(
+                            "Product not fetched: id=${unfetched.productId}, type=${unfetched.productType}, " +
+                                "status=${unfetched.statusCode}"
+                        )
+                    }
 
-                val prices = queryResult.productDetailsList.associate { details ->
-                    details.productId to details.toPriceDetails()
+                    val prices = queryResult.productDetailsList.associate { details ->
+                        details.productId to details.toPriceDetails()
+                    }
+                    updatePrices(prices)
+                } else {
+                    log("queryProductDetails failed: ${billingResult.responseCode} ${billingResult.debugMessage}")
                 }
-                updatePrices(prices)
-            } else {
-                log("queryProductDetails failed: ${billingResult.responseCode} ${billingResult.debugMessage}")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to process ProductDetails response for type=$type", e)
+                updateFailedPurchase(billingResponseCode = BillingClient.BillingResponseCode.ERROR)
+            } finally {
+                done()
             }
-            done()
         }
     }
 
@@ -396,16 +450,21 @@ class BillingService(
             .build()
 
         mBillingClient.queryProductDetailsAsync(params) { billingResult, queryResult ->
-            if (billingResult.isOk()) {
-                isBillingClientConnected(true, billingResult.responseCode)
-                val details = queryResult.productDetailsList.find { it.productId == this }
-                productDetails[this] = details
-                queryResult.unfetchedProductList.forEach { unfetched ->
-                    log("Product not fetched before purchase: ${unfetched.productId}, status=${unfetched.statusCode}")
+            try {
+                if (billingResult.isOk()) {
+                    isBillingClientConnected(true, billingResult.responseCode)
+                    val details = queryResult.productDetailsList.find { it.productId == this }
+                    productDetails[this] = details
+                    queryResult.unfetchedProductList.forEach { unfetched ->
+                        log("Product not fetched before purchase: ${unfetched.productId}, status=${unfetched.statusCode}")
+                    }
+                    done(details)
+                } else {
+                    log("Failed to get details for sku: $this (${billingResult.responseCode})")
+                    done(null)
                 }
-                done(details)
-            } else {
-                log("Failed to get details for sku: $this (${billingResult.responseCode})")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to process ProductDetails for sku=$this", e)
                 done(null)
             }
         }
