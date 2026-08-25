@@ -55,10 +55,9 @@ def releaseGodotLibraries = fileTree(dir: 'libs/release', include: ['godot-lib*.
 def debugGodotLibraries = fileTree(dir: 'libs/debug', include: ['godot-lib*.aar', 'godot-lib*.jar'])
 
 dependencies {
-    // Billing 9.1.0 KTX is compiled with Kotlin 2.3 metadata. The project toolchain
-    // intentionally uses Kotlin 2.3.21 / AGP 8.13.2 so the dependency is compiled natively
-    // rather than bypassing metadata checks with -Xskip-metadata-version-check.
-    implementation 'com.android.billingclient:billing-ktx:9.1.0'
+    // 8.3.0 is the latest release in the Google Play Billing 8.x line.
+    // Keep the modern Kotlin/AGP toolchain already used by the project; it is compatible with Billing 8.3.0.
+    implementation 'com.android.billingclient:billing-ktx:8.3.0'
 
     if (!releaseGodotLibraries.files.isEmpty()) {
         releaseCompileOnly releaseGodotLibraries

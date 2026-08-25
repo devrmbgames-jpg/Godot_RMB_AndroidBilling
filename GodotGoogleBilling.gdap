@@ -5,5 +5,5 @@ binary="GodotGoogleBilling.release.aar"
 
 [dependencies]
 local=[]
-remote=["com.android.billingclient:billing-ktx:9.1.0"]
+remote=["com.android.billingclient:billing-ktx:8.3.0"]
 custom_maven_repos=[]

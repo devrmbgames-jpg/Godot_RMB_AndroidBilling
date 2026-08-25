@@ -1,32 +1,24 @@
-# Godot 3.6.2 + Google Play Billing 9.1.0 integration
+# Godot 3.6.2 + Google Play Billing 8.3.0 integration
 
-This plugin preserves the existing Godot-facing API (`build`, `purchase`, `subscribe`, `unsubscribe` and existing signals) while migrating the Android implementation to Google Play Billing Library 9.1.0.
+This plugin preserves the existing Godot-facing API (`build`, `purchase`, `subscribe`, `unsubscribe` and existing signals) while using the latest Google Play Billing Library release in the 8.x line: 8.3.0.
 
 ## 1. Plugin build toolchain
 
-Billing 9.1.0 KTX contains Kotlin 2.3 metadata. Do not build this plugin with the old Kotlin 1.9 / AGP 8.2 toolchain and do not suppress metadata validation with `-Xskip-metadata-version-check`.
-
-The plugin project is aligned to:
+The plugin project keeps the modern Android build toolchain already used by the project:
 
 ```text
-Google Play Billing: 9.1.0
-Kotlin:              2.3.21
+Google Play Billing:   8.3.0
+Kotlin:               2.3.21
 Android Gradle Plugin: 8.13.2
-Gradle:              8.13
-compileSdk:          36
-minSdk:              23
-targetSdk:           36
-JDK / bytecode:      17
-Build Tools:         35.0.0
+Gradle:               8.13
+compileSdk:           36
+minSdk:               23
+targetSdk:            36
+JDK / bytecode:       17
+Build Tools:          35.0.0
 ```
 
-The important compatibility points are:
-
-- Billing 9.1.0 KTX must be compiled with a Kotlin compiler capable of reading Kotlin 2.3 metadata;
-- Kotlin 2.3 requires an AGP/R8 generation that supports Kotlin 2.3; AGP 8.13.2 is used here;
-- API 35+ AndroidX dependencies require `compileSdk >= 35`; the plugin uses API 36;
-- Billing 9 requires `minSdk >= 23`;
-- AGP 8.13 uses JDK 17 and Gradle 8.13.
+Billing 8.1+ requires API 23+, so this plugin keeps `minSdk 23`.
 
 ## 2. Godot Android library selection
 
@@ -61,31 +53,9 @@ org.godotengine:godot:3.6.2.stable
 
 This fallback exists primarily so clean clones and GitHub Actions can compile and validate the plugin without storing the private/custom Godot engine binary in the repository.
 
-The relevant Gradle logic is equivalent to:
-
-```gradle
-def publicGodotCoordinate = 'org.godotengine:godot:3.6.2.stable'
-def releaseGodotLibraries = fileTree(dir: 'libs/release', include: ['godot-lib*.aar', 'godot-lib*.jar'])
-def debugGodotLibraries = fileTree(dir: 'libs/debug', include: ['godot-lib*.aar', 'godot-lib*.jar'])
-
-dependencies {
-    if (!releaseGodotLibraries.files.isEmpty()) {
-        releaseCompileOnly releaseGodotLibraries
-    } else {
-        releaseCompileOnly publicGodotCoordinate
-    }
-
-    if (!debugGodotLibraries.files.isEmpty()) {
-        debugCompileOnly debugGodotLibraries
-    } else {
-        debugCompileOnly publicGodotCoordinate
-    }
-}
-```
-
 Both the custom engine library and the Maven fallback are `compileOnly`, so neither is embedded into `GodotGoogleBilling.*.aar`.
 
-The Maven fallback only validates compatibility with the public Godot 3.6.2 Android plugin API. Before shipping, the plugin should still be compiled/tested against the actual modified Godot AAR if that engine changes Java/Kotlin-facing Android plugin APIs.
+Before shipping, the plugin should still be compiled and tested against the actual modified Godot AAR if that engine changes Java/Kotlin-facing Android plugin APIs.
 
 Build with JDK 17:
 
@@ -101,15 +71,6 @@ Expected release output:
 app/build/outputs/aar/GodotGoogleBilling.release.aar
 ```
 
-If Android Studio still reports Kotlin 1.9 after pulling these changes, stop old daemons and clear the project build cache before rebuilding:
-
-```bash
-./gradlew --stop
-./gradlew clean
-```
-
-On Windows you can also remove the project's `.gradle/` and `app/build/` directories. Clearing the global Gradle cache is normally unnecessary.
-
 ## 3. Install into the Godot project
 
 Copy the rebuilt plugin into:
@@ -119,19 +80,19 @@ res://android/plugins/GodotGoogleBilling.release.aar
 res://android/plugins/GodotGoogleBilling.gdap
 ```
 
-The descriptor declares Billing 9.1.0 as a remote dependency. If your project instead declares Billing directly in `res://android/build/build.gradle`, keep exactly one Billing version:
+The descriptor declares Billing 8.3.0 as a remote dependency. If the Godot Android project declares Billing directly in `res://android/build/build.gradle`, keep exactly one Billing version:
 
 ```gradle
 dependencies {
-    implementation 'com.android.billingclient:billing-ktx:9.1.0'
+    implementation 'com.android.billingclient:billing-ktx:8.3.0'
 }
 ```
 
-Do not keep Billing 7/8 artifacts alongside Billing 9.1.0.
+Do not resolve Billing 9.x alongside this plugin.
 
 ## 4. Required `res://android/build` baseline
 
-The Godot custom-build project that consumes the AAR must also use a modern Android toolchain. The Kidduca project migration uses:
+The consuming Godot Android project can keep the current modern toolchain:
 
 ```text
 Android Gradle Plugin: 8.13.2
@@ -142,8 +103,6 @@ targetSdk:             36
 minSdk:                23
 Java:                  17
 ```
-
-At minimum, the consuming project must not resolve Billing 9.1.0 / Kotlin 2.3 libraries using an old Kotlin 1.9 compiler or compile against API 34.
 
 Repositories must include:
 
@@ -162,8 +121,6 @@ compileOptions {
     targetCompatibility JavaVersion.VERSION_17
 }
 ```
-
-and Kotlin should target JVM 17 as well.
 
 ## 5. Godot API compatibility
 
@@ -188,18 +145,20 @@ product_failed
 country_code_update
 ```
 
-## 6. Billing 9 behavior handled internally
+## 6. Billing 8 behavior handled internally
 
 The Android implementation:
 
 - uses `PendingPurchasesParams`;
-- handles `QueryProductDetailsResult` and unfetched products;
+- uses the Billing 8 `QueryProductDetailsResult` response and logs unfetched products;
 - refreshes `ProductDetails` before purchase flow launch;
 - supplies subscription / one-time offer tokens when needed;
 - does not grant entitlement for a `PENDING` purchase;
 - restores active purchases through `queryPurchasesAsync`;
 - consumes consumables and acknowledges non-consumables/subscriptions;
-- preserves the dictionaries/signals exposed to Godot.
+- preserves the existing dictionaries and signals exposed to Godot.
+
+The experimental callback/restore changes added after the original migration are intentionally not part of this Billing 8 branch.
 
 ## 7. CI and validation
 
@@ -208,7 +167,7 @@ GitHub Actions runs a full release build. In CI there normally is no local custo
 After the plugin compiles, validate at least:
 
 - `:app:assembleDebug` and `:app:assembleRelease`;
-- the dependency tree contains only Billing 9.1.0;
+- the dependency tree contains only Billing 8.3.0;
 - local production build uses the actual custom Godot AAR;
 - non-consumable purchase;
 - consumable purchase and re-purchase after consume;
